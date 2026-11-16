@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """Find and remove credentials and personal traces before this instance is imaged and cloned.
 
-    unset HISTFILE                                       # first: keep these commands out of shell history
-    python3 prepare_image.py check                       # report only (default); changes nothing
-    python3 prepare_image.py check --extra you@uni.edu   # also look for your email, name, etc.
-    python3 prepare_image.py scrub                       # remove what 'check' found (asks first)
-    python3 prepare_image.py check --clone               # on a participant clone: expects its key file
+    unset HISTFILE                                  # first: keep these commands out of shell history
+    cd ~/workshop
+    python3 tools/prepare_image.py check            # report only (default); changes nothing
+    python3 tools/prepare_image.py check --extra you@uni.edu   # also look for your email, name, etc.
+    python3 tools/prepare_image.py scrub            # remove what 'check' found (asks first)
+    python3 tools/prepare_image.py check --clone    # on a participant clone: expects its key file
 
 Run it as the workshop user (not with sudo), from a plain terminal, with VS Code, the Claude
 desktop app and all browsers closed. It never prints a secret: only where one was found.
@@ -17,11 +18,13 @@ import os
 import re
 import shutil
 import stat
+import subprocess
 import sys
 from pathlib import Path
 
 HOME = Path.home()
-WORKSHOP = HOME / "workshop"
+_REPO = Path(__file__).resolve().parent.parent     # this file lives in the workshop repo's tools/ folder
+WORKSHOP = _REPO if (_REPO / "00_preflight.ipynb").exists() else HOME / "workshop"
 KEY_DIR = HOME / ".config" / "swarm-lab"
 
 # ---- What a secret looks like ---------------------------------------------------------
@@ -60,7 +63,7 @@ STORES = [
     ("Claude Code sign-in, settings and chat transcripts", ".claude", "identity"),
     ("Claude Code account file", ".claude.json", "identity"),
     ("Claude Code account file backups", ".claude.json.backup*", "identity"),
-    ("Claude Code permission grants for the workshop folder", "workshop/.claude/settings.local.json", "identity"),
+    ("Claude Code permission grants for the workshop folder", str(WORKSHOP / ".claude" / "settings.local.json"), "identity"),
     ("Anthropic CLI profiles", ".config/anthropic", "identity"),
     ("Claude desktop app data", ".config/Claude", "identity"),
     ("Codex sign-in and history", ".codex", "identity"),
@@ -98,8 +101,7 @@ VSCODE_KEEP = {"User/settings.json", "User/keybindings.json", "User/snippets"}
 
 # ---- What to read when looking for secrets ------------------------------------------------
 SCAN_DIRS = [".config", ".claude", ".codex", ".aws", ".ssh", ".docker", ".huggingface", ".ipython", ".jupyter",
-             ".gnupg", ".local/share/jupyter", ".local/share/Trash", ".cache", "Desktop", "Documents", "Downloads",
-             "workshop"]
+             ".gnupg", ".local/share/jupyter", ".local/share/Trash", ".cache", "Desktop", "Documents", "Downloads"]
 SYSTEM_FILES = [Path("/etc/environment"), Path("/etc/bash.bashrc")] + sorted(Path("/etc/profile.d").glob("*"))
 SKIP_DIRS = {"node_modules", "__pycache__", ".venv", "venv", "site-packages", "Cache", "CachedData", "Code Cache",
              "GPUCache", "CachedExtensionVSIXs", "Crashpad", "pip", "uv", "ms-playwright", "thumbnails",
@@ -139,6 +141,7 @@ def iter_scan_targets():
     yield from conda_dirs()
     for name in SCAN_DIRS:
         yield HOME / name
+    yield WORKSHOP
 
 
 def _skipped(path):
@@ -268,6 +271,18 @@ def cache_ready():
     return problems
 
 
+def repo_changes():
+    """Tracked workshop files that differ from the GitHub version. Participants get them exactly as they are."""
+    if not (WORKSHOP / ".git").is_dir() or not shutil.which("git"):
+        return []
+    try:
+        r = subprocess.run(["git", "-C", str(WORKSHOP), "status", "--porcelain", "--untracked-files=no"],
+                           capture_output=True, text=True, timeout=60)
+    except (OSError, subprocess.SubprocessError):
+        return []
+    return [line[3:] for line in r.stdout.splitlines() if len(line) > 3]
+
+
 def remove(p):
     if p.is_symlink() or p.is_file():
         p.unlink()
@@ -312,6 +327,11 @@ def report(hits, stores, leftovers, clone=False):
     if auth.is_file():
         n = sum(1 for _, line in iter_lines(auth) if line.strip() and not line.startswith("#"))
         print(f"\nℹ️  {auth} holds {n} key(s), and every clone will accept SSH logins with them. Make sure each is RAIL's.")
+    changed = repo_changes()
+    if changed:
+        print(f"ℹ️  {len(changed)} file(s) in {WORKSHOP} differ from the GitHub version, and every clone gets them as they are now: "
+              f"{', '.join(changed[:10])}{' …' if len(changed) > 10 else ''}. "
+              f"Restore one with: git -C {WORKSHOP} checkout -- FILE")
     if clone:
         print(f"ℹ️  Workshop key file: {'present' if (KEY_DIR / 'keys.env').exists() else 'not set up yet'} "
               "(expected on a participant clone; not checked for secrets).")
@@ -328,7 +348,8 @@ Before running 'scrub', do these by hand (deleting files alone doesn't cancel a 
      Give participants fresh, capped keys instead.
   5. In this terminal, run 'unset HISTFILE' so these commands (and your --extra email) aren't saved to history.
 After 'scrub': run 'check' again, then shut down straight away (sudo poweroff) without logging back in,
-and ask RAIL to make the image. Afterwards, log in to one clone and run 'check --clone' there.
+and ask RAIL to make the image. Afterwards, log in to one clone and run
+'python3 ~/workshop/tools/prepare_image.py check --clone' there.
 If you ever used sudo -i or a root shell, also clear root's history: sudo rm -f /root/.bash_history
 """
 
