@@ -218,3 +218,6 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Facilitators' setup guide: kept outside the repository, never committed
+ORGANISER_SETUP.md

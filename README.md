@@ -38,7 +38,6 @@ Your workshop VM already has everything installed: VS Code, the workshop environ
 ├── 03_virtual_biotech.ipynb   Module 3 · Virtual Biotech
 ├── environment.yml            the workshop conda environment (Python 3.12)
 ├── claude_settings.json       Claude Code permissions used on the workshop VMs
-├── ORGANISER_SETUP.md         how the facilitators build the workshop VM
 ├── LICENSE
 └── tools
     ├── make_workshop_dataset.py  builds Module 2's lung adenocarcinoma dataset from CELLxGENE Census
@@ -47,11 +46,11 @@ Your workshop VM already has everything installed: VS Code, the workshop environ
     └── vbt_workshop.py        runs the Virtual Biotech with a small team (Module 3 calls it)
 ```
 
-The datasets, the Paper2Agent and Virtual Biotech code, the Open Targets data and the pre-run results aren't in this repository. They're set up on the workshop VM, as `ORGANISER_SETUP.md` describes.
+The datasets, the Paper2Agent and Virtual Biotech code, the Open Targets data and the pre-run results aren't in this repository. The facilitators set them up on the workshop VM.
 
 ## Running it after the workshop
 
-To run the notebooks on your own Ubuntu machine (22.04 or later), follow `ORGANISER_SETUP.md` and skip the parts about images and clones. You'll need your own OpenAI and Anthropic API keys, a Claude account with Claude Code, and about 100 GB of disk space, mostly for Module 3's copy of Open Targets.
+To run the notebooks on your own Ubuntu machine (22.04 or later), ask the facilitators for their setup notes. You'll need your own OpenAI and Anthropic API keys, a Claude account with Claude Code, and about 100 GB of disk space, mostly for Module 3's copy of Open Targets.
 
 ## Built on
 
