@@ -41,7 +41,9 @@ Your workshop VM already has everything installed: VS Code, the workshop environ
 ├── ORGANISER_SETUP.md         how the facilitators build the workshop VM
 ├── LICENSE
 └── tools
+    ├── make_workshop_dataset.py  builds Module 2's lung adenocarcinoma dataset from CELLxGENE Census
     ├── prepare_image.py       removes keys and sign-ins before the VM is copied for participants
+    ├── setup_paper_agents.py  installs the Scanpy and TISSUE paper agents for Module 2
     └── vbt_workshop.py        runs the Virtual Biotech with a small team (Module 3 calls it)
 ```
 

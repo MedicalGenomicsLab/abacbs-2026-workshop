@@ -60,6 +60,16 @@ CREDENTIAL_GUARDS = [
 ]
 
 
+WRAPUP_PROMPT = (
+    "Time is up for new work. Do not delegate to any agent and do not start any new analysis or query. Using only "
+    "the results already on record in this run (the specialists' reports, their registered files and tool calls), "
+    "write your final answer now under these headings: Target rationale; Safety liabilities; Suggested modality; "
+    "Open questions and next steps. File a claim for every factual statement, citing the evidence on record. "
+    "List any planned analysis that wasn't finished as an open question, and say plainly that the research was "
+    "cut short. You have about {minutes} minutes."
+)
+
+
 def emit(kind, **data):
     print("§" + json.dumps({"kind": kind, **data}, default=str), flush=True)
 
@@ -76,6 +86,18 @@ def workspace_note(name, workspace_dir):
             "Before returning, call mcp__provenance__register_artifact for each supporting file and return the "
             "registered paths and the tool-use IDs behind your findings, so the CSO can cite them. If a tool "
             "fails, report the failure; a failed query is not evidence.\n\n")
+
+
+def time_budget_note(cfg):
+    """Specialists can't see the run's clock, so tell them their share of it."""
+    budget = max(3, round(float(cfg.get("time_limit_min", 15)) * 0.5))
+    return (
+        f"\n\n## Time budget (workshop session)\n"
+        f"Return your report to the CSO within about {budget} minutes of starting; the whole run is stopped soon "
+        "after that. Prefer quick, targeted queries. Don't download large single-cell matrices (keep any CELLxGENE "
+        "Census extract to a few thousand cells, filtered to the genes you need) and don't start any step you "
+        "expect to take more than two minutes. If you run short of time, stop and return what you have, saying "
+        "what is missing.\n")
 
 
 def paper_note(pa, tool_names):
@@ -116,6 +138,7 @@ def shape_team(agents, cfg, workspace_dir):
     for name, agent in team.items():
         if name in SUPPORT_AGENTS:
             continue
+        agent.prompt = (agent.prompt or "") + time_budget_note(cfg)
         if cfg.get("effort") and "effort" in fields:
             agent.effort = cfg["effort"]
         if cfg.get("specialist_max_turns") and "maxTurns" in fields:
@@ -140,7 +163,9 @@ def team_note(team, cfg):
         "needs expertise you don't have, say so in your report instead of improvising.\n" + "\n".join(lines) + "\n\n"
         "The user's brief is detailed: do not ask clarifying questions. State your assumptions and proceed.\n"
         f"You have about {cfg.get('time_limit_min', 15)} minutes. Use one round of delegation (run specialists in "
-        "parallel), then the scientific reviewer if it is on your team, then synthesise and file claims.\n")
+        "parallel), then the scientific reviewer if it is on your team, then synthesise and file claims.\n"
+        "Call each specialist at most once, and give it all of its analyses in that one task. Specialists have been "
+        "told to report back within about half of your time, so leave the rest for review, synthesis and claims.\n")
 
 
 def _describe(team, all_names, mcp_names, paper_servers):
@@ -262,7 +287,9 @@ async def cmd_run(cfg, query):
         emit("status", message=f"This Agent SDK version can't set {' or '.join(missing)} per agent, so the "
                                "specialists keep the Virtual Biotech's own settings (slower and costlier).")
     sid, t0, limit = str(uuid.uuid4()), time.monotonic(), float(cfg.get("time_limit_min", 15)) * 60
-    state = {"run_dir": None, "stopped": False, "stop_reason": None, "stopped_at": None, "forced": False}
+    wrap_s = float(cfg.get("wrapup_min", 4)) * 60
+    state = {"run_dir": None, "stopped": False, "stop_reason": None, "stopped_at": None, "forced": False,
+             "phase": "research", "deadline": t0 + limit, "research_stop": None, "wrapped_up": False}
 
     # Ctrl-C / SIGINT from the notebook: stop the team cleanly and save the run, like the time limit.
     def request_stop():
@@ -296,7 +323,7 @@ async def cmd_run(cfg, query):
                 state["run_dir"] = str(s.run.run_dir)
                 emit("run_dir", path=state["run_dir"])
             elapsed = time.monotonic() - t0
-            if elapsed > limit and state["stop_reason"] is None:
+            if time.monotonic() > state["deadline"] and state["stop_reason"] is None:
                 state["stop_reason"] = "time_limit"
             due = time.monotonic() - last_progress >= cfg.get("progress_every_s", 20)
             if state["run_dir"] is not None and (due or (state["stop_reason"] and not state["stopped"])):
@@ -307,12 +334,17 @@ async def cmd_run(cfg, query):
                 calls = [e for e in events if e.get("type") in ("tool_end", "tool_error")]
                 failed = [e for e in calls if e.get("type") == "tool_error" or e.get("is_error")]
                 emit("progress", elapsed_s=round(elapsed), running=sorted((started - ended).keys()),
-                     finished=sorted(ended.keys()), tool_calls=len(calls), failed_calls=len(failed))
+                     finished=sorted(ended.keys()), tool_calls=len(calls), failed_calls=len(failed),
+                     phase=state["phase"])
             if state["stop_reason"] and not state["stopped"]:
                 state["stopped"], state["stopped_at"] = True, time.monotonic()
-                if state["stop_reason"] == "time_limit":
+                if state["stop_reason"] == "time_limit" and state["phase"] == "research":
                     emit("time_limit", message=f"Time limit of {cfg.get('time_limit_min', 15)} min reached; stopping "
-                                               "the run. It is saved as interrupted, with everything done so far.")
+                                               "the team's research. The CSO then gets a few minutes to write up "
+                                               "what is already on record.")
+                elif state["stop_reason"] == "time_limit":
+                    emit("time_limit", message="The write-up ran out of time too; stopping. The run is saved as "
+                                               "interrupted, with everything done so far.")
                 else:
                     emit("stopping", message="Stopping the run as asked. It is saved as interrupted, with "
                                              "everything done so far.")
@@ -323,10 +355,45 @@ async def cmd_run(cfg, query):
                 state["forced"] = True
                 s.abort_query()
 
+    async def one_turn(text, history):
+        """One CSO turn in this session (mirrors run_vbt._run_turns, without closing the session after it)."""
+        previous = app.session_manager.sessions.get(sid)
+        before = len(previous.turns) if previous else 0
+        last = None
+        async for result in app.async_process_message(text, history, sid, model_key=cfg["model"]):
+            last = result
+        history = last[0] if last else history
+        s = app.session_manager.sessions.get(sid)
+        if s is not None and len(s.turns) > before and history:
+            history = history[:-1] + [{"role": "assistant", "content": s.turns[-1]["response"]}]
+        return history
+
+    async def conversation():
+        try:
+            history = await one_turn(query, [])
+            s = app.session_manager.sessions.get(sid)
+            if (state["stop_reason"] == "time_limit" and wrap_s > 0 and s is not None
+                    and getattr(s, "run", None) is not None):
+                # The research was cut off. Give the CSO a short, separate turn to write up what is on record,
+                # so the run still ends with a report and checkable claims.
+                state.update(phase="wrap-up", research_stop="time_limit", stop_reason=None, stopped=False,
+                             stopped_at=None, forced=False, deadline=time.monotonic() + wrap_s)
+                emit("wrapup", message=f"Writing up: the CSO has {wrap_s / 60:.0f} min to write the report and "
+                                       "file claims from the work already on record (no new analyses).")
+                await one_turn(WRAPUP_PROMPT.format(minutes=round(wrap_s / 60)), history)
+                state["wrapped_up"] = state["stop_reason"] is None
+        finally:
+            s = app.session_manager.sessions.get(sid)
+            if s is not None:
+                try:
+                    await s.cleanup()
+                except Exception as e:
+                    emit("status", message=f"Cleanup warning: {type(e).__name__}")
+
     watcher = asyncio.create_task(watch())
-    task = asyncio.create_task(run_vbt._run_turns([query], cfg["model"], session_id=sid, quiet=True))
+    task = asyncio.create_task(conversation())
     try:
-        await asyncio.wait_for(asyncio.shield(task), limit + 240)
+        await asyncio.wait_for(asyncio.shield(task), limit + wrap_s + 360)
     except asyncio.TimeoutError:
         emit("status", message="The run didn't stop after the time limit, so it was cancelled.")
         task.cancel()
@@ -340,8 +407,9 @@ async def cmd_run(cfg, query):
         watcher.cancel()
     s = app.session_manager.sessions.get(sid)
     run_dir = state["run_dir"] or (str(s.run.run_dir) if s is not None and getattr(s, "run", None) else None)
-    emit("result", elapsed_s=round(time.monotonic() - t0), stopped_by_time_limit=state["stop_reason"] == "time_limit",
-         stopped_by_user=state["stop_reason"] == "user", **_summarise(run_dir))
+    by_time = state["research_stop"] == "time_limit" or state["stop_reason"] == "time_limit"
+    emit("result", elapsed_s=round(time.monotonic() - t0), stopped_by_time_limit=by_time,
+         stopped_by_user=state["stop_reason"] == "user", wrapped_up=state["wrapped_up"], **_summarise(run_dir))
 
 
 def main():

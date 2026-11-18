@@ -8,8 +8,8 @@
     python3 tools/prepare_image.py scrub            # remove what 'check' found (asks first)
     python3 tools/prepare_image.py check --clone    # on a participant clone: expects its key file
 
-Run it as the workshop user (not with sudo), from a plain terminal, with VS Code, the Claude
-desktop app and all browsers closed. It never prints a secret: only where one was found.
+Run it as the workshop user (not with sudo), from a plain terminal, with VS Code and all
+browsers closed. It never prints a secret: only where one was found.
 Exit code: 0 = clean, 1 = something found. Needs only the Python that ships with Ubuntu.
 """
 import argparse
@@ -341,7 +341,7 @@ def report(hits, stores, leftovers, clone=False):
 
 MANUAL_STEPS = """
 Before running 'scrub', do these by hand (deleting files alone doesn't cancel a sign-in on the server):
-  1. Claude Code (VS Code panel): type /logout.      Claude desktop app: sign out, then quit.
+  1. Claude Code (VS Code panel): type /logout. In a terminal: claude auth logout.
   2. VS Code: Accounts menu (bottom-left) -> sign out of every account; turn Settings Sync off. Quit VS Code.
   3. Browser: sign out of claude.ai, platform.openai.com, platform.claude.com, GitHub, Google. Quit the browser.
   4. In the OpenAI and Anthropic consoles, revoke the keys you used while setting up this machine.
