@@ -58,4 +58,8 @@ To run the notebooks on your own Ubuntu machine (22.04 or later), ask the facili
 - [Paper2Agent](https://github.com/jmiao24/Paper2Agent) (Module 2)
 - [The Virtual Biotech](https://github.com/harrisongzhang/TheVirtualBiotech) (Module 3)
 
+## Acknowledgements
+- Materials for this workshop were produced with the assistance of Claude Opus and ChatGPT Sol.
+- Travel funding for facilitator Dr Khoa Tran was provided by the Medical Genomics Group @ QIMR Berghofer.
+
 Each has its own licence. The workshop materials in this repository are covered by `LICENSE`.
